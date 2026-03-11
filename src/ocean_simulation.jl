@@ -1,6 +1,6 @@
 using Oceananigans
 
-using ClimaOcean.OceanSimulations: default_planet_rotation_rate,
+using NumericalEarth.OceanSimulations: default_planet_rotation_rate,
                                    default_gravitational_acceleration,
                                    default_radiative_forcing,
                                    default_or_override,

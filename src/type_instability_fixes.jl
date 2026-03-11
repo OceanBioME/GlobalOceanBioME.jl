@@ -76,7 +76,7 @@ end
 
 
 ##### Metadata fields
-using ClimaOcean.DataWrangling: 
+using NumericalEarth.DataWrangling: 
     metadata_path,
     Metadatum,
     dataset_variable_name,
@@ -85,7 +85,7 @@ using ClimaOcean.DataWrangling:
     reversed_vertical_axis
 
 
-import ClimaOcean.DataWrangling: retrieve_data
+import NumericalEarth.DataWrangling: retrieve_data
 
 function retrieve_data(metadata::Metadatum)
     path = metadata_path(metadata)
