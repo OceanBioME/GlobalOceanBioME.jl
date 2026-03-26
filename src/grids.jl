@@ -55,7 +55,9 @@ function one_p_five_degree_grid(arch = GPU(), FT = Float64;
                                 shapiro_passes = 2,
                                 shapiro_strength = 0.1,
                                 bottom_type = GridFittedBottom,
-                                refine_equator = false)
+                                refine_equator = false,
+                                metadata = Metadatum(:bottom_height; dataset = ETOPO2022()),
+                                cache = true)
     z = compute_zs(; Nz, H, kc, Δzf0, Δzf1)
 
     φ_transformation = refine_equator ? 
@@ -64,8 +66,21 @@ function one_p_five_degree_grid(arch = GPU(), FT = Float64;
 
     underlying_grid = TripolarGrid(arch, FT; size = (Nx, Ny, Nz), halo, z, φ_transformation)
 
+    config = MedianBathymetryRegridding(underlying_grid, metadata; label = "_median_smoothed_and_filled")
+
+    if cache
+        cached_data = load_bathymetry_cache(config)
+        if !isnothing(cached_data)
+            target_z = Field{Center, Center, Nothing}(underlying_grid)
+            set!(target_z, cached_data)
+            fill_halo_regions!(target_z)
+            return ImmersedBoundaryGrid(underlying_grid, bottom_type(target_z);
+                                        active_cells_map=true)
+        end
+    end
+
     CUDA.@allowscalar begin
-        bottom_height = on_architecture(CPU(), NumericalEarth.Bathymetry.maybe_extend_longitude(GlobalOceanBioME.regrid_bathymetry(underlying_grid), Periodic()))
+        bottom_height = on_architecture(CPU(), NumericalEarth.Bathymetry.maybe_extend_longitude(GlobalOceanBioME.regrid_bathymetry(underlying_grid; metadata), Periodic()))
     end
 
     for _ in 1:shapiro_passes
@@ -87,6 +102,11 @@ function one_p_five_degree_grid(arch = GPU(), FT = Float64;
 
     bathymetry_final = Field{Center, Center, Nothing}(underlying_grid)
     set!(bathymetry_final, bottom_height[1:underlying_grid.Nx, 1:underlying_grid.Ny])
+
+    if cache
+        bottom_height = Array(interior(bathymetry_final, :, :, 1))
+        save_bathymetry_cache(config, bottom_height)
+    end
 
     return ImmersedBoundaryGrid(underlying_grid, bottom_type(bathymetry_final);
                                 active_cells_map=true)
