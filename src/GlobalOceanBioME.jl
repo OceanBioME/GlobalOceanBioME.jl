@@ -1,10 +1,16 @@
 module GlobalOceanBioME
 
-#include("ocean_simulation.jl")
-#include("type_instability_fixes.jl")
+export wind_from_atmosphere
+
+# TODO:
+# - light attenuation under ice
+# - ice nutrient supply
+
 include("grids.jl")
-include("gas_exchange.jl")
-include("rivers.jl")
-include("GM_flux_limiters.jl")
+include("gas_exchange.jl") # move to OceanBioME
+include("rivers.jl") # move to NumericalEarth
+include("regrid_bathymetry.jl")
+include("salinity_nudging.jl")
+include("light_attenuation.jl")
 
 end # module GlobalOceanBioME

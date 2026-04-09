@@ -6,6 +6,8 @@ using Oceananigans.OutputReaders: FlavorOfFTS
 using Oceananigans.Units: Time
 import OceanBioME.Models.GasExchangeModel: surface_value
 
+wind_from_atmosphere(atmosphere) = (values(atmosphere.velocities)..., atmosphere.grid)
+
 @inline function OceanBioME.Models.GasExchangeModel.surface_value(f::Tuple{FlavorOfFTS, FlavorOfFTS, <:AbstractGrid}, i, j, grid, clock, args...)
     uf, vf, fgrid = f
 
