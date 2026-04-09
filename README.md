@@ -8,3 +8,6 @@ Provided is:
 - iron deposition from dust: `DustCOMM_iron_deposition_boundary_condition()`
 - light from the atmosphere: `biogeochemistry = LOBSTER(grid; surface_photosynthetically_available_radiation = PAR_from_atmosphere(atmosphere)))`
 
+To install:
+`Pkg.add("https://github.com/OceanBioME/GlobalOceanBioME.git#jsw/new")`
+Maybe it will work, maybe it won't.
