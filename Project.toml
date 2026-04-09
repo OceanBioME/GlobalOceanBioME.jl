@@ -1,0 +1,21 @@
+name = "GlobalOceanBioME"
+uuid = "4ecda704-f839-4fe5-82b2-c1ba5dcf7159"
+authors = ["Jago Strong-Wright <jagoosw@protonmail.com>"]
+version = "0.1.0"
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
+NetCDF = "30363a11-5582-574a-97bb-aa9a979735b9"
+NumericalEarth = "904d977b-046a-4731-8b86-9235c0d1ef02"
+OceanBioME = "a49af516-9db8-4be4-be45-1dad61c5a376"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+SeawaterPolynomials = "d496a93d-167e-4197-9f49-d3af4ff8fe40"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+WorldOceanAtlasTools = "04f20302-f1b9-11e8-29d9-7d841cb0a64a"
