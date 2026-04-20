@@ -9,7 +9,8 @@ const exports = (:DIN, :DIP, :DOC, :DON, :DOP, :DSi, :PN, :POC, :PP, :TSS)
 # hydrology can be Qnat which is the estimated non-athropogenically disturbed outflow
 # outflows are km^3/yr
 # Mg/yr to mmol / s : 10^6 = g/yr, 1/14 = mol/yr
-function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, scalefactor = (10^6/14, 10^6/14, 10^6/12, 1000^3) ./ (365*24*60*60) .* 1000)
+function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, scalefactor = (10^6/14, 10^6/14, 10^6/12) ./ (365*24*60*60) .* 1000)
+    (tracers != (:DIN, :DON, :DOC)) && throw(ArgumentError("Haven't implemented this function correctly so have to use default tracers"))
     basins_df = CSV.read("rivers/basins.csv", DataFrame)
     export_df = CSV.read("rivers/exports.csv", DataFrame)
     hydrology_df = CSV.read("rivers/hydrology.csv", DataFrame)
@@ -41,25 +42,25 @@ function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, sc
     is = zeros(size(export_df, 1))
     js = zeros(size(export_df, 1))
 
-    forcings = NamedTuple{(tracers..., hydrology)}(map(n -> CenterField(grid), 1:length(tracers)+ifelse(isnothing(hydrology), 0, 1)))
+    forcing_fields = NamedTuple{(tracers..., hydrology)}(map(n -> CenterField(grid), 1:length(tracers)+ifelse(isnothing(hydrology), 0, 1)))
     # TODO: do this properly
     CUDA.@allowscalar for n in 1:size(export_df, 1)
         lat = basins_df.mouth_lat[n]
-        lon = mod(basins_df.mouth_lon[n], 365)
+        lon = mod(basins_df.mouth_lon[n], 360)
 
-        objective = [(sqrt((lat-node[1])^2 + (lon-node[2])^2) + immersed[m] * Inf) for (m, node) in enumerate(points)]
+        objective = [(sqrt((lat-node[1])^2 + (lon-mod(node[2], 360))^2) + immersed[m] * Inf) for (m, node) in enumerate(points)]
 
         list_index = findmin(objective)[2]
 
         i, j = Tuple(CartesianIndices(size(λ))[list_index])
-        vol = Oceananigans.Grids.volume(i, j, grid.Nz, grid, Center(), Center(), Center())
+        vol = Oceananigans.Operators.volume(i, j, grid.Nz, grid, Center(), Center(), Center())
 
         for (m, tracer) in enumerate(tracers)
-            forcings[tracer][i, j, grid.Nz] += export_df[n, Symbol(:Ld_, tracer)] * scalefactor[m] / vol 
+            forcing_fields[tracer][i, j, grid.Nz] += export_df[n, Symbol(:Ld_, tracer)] * scalefactor[m] / vol 
         end
 
         if !isnothing(hydrology)
-            forcings[hydrology][i, j, grid.Nz] += hydrology_df[n, hydrology] * scalefactor[end] / vol 
+            forcing_fields[hydrology][i, j, grid.Nz] += hydrology_df[n, hydrology] * scalefactor[end] / vol 
         end
     end
     # constant DIC to Fe ratio to get 1.45 Tg Fe yr−1
@@ -67,5 +68,17 @@ function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, sc
     # Estimate of 40% DOC vs 60% DIC from 10.1029/95GB02925 to give DIC and Alk
     # They also say its 1Gt total but NEWS2 doesn't add up to that its like 0.42Gt
 
-    return forcings
+    CUDA.@allowscalar begin
+        total_DIC_flux =  Field(Integral(forcing_fields.DOC))[1, 1, 1] * 0.6 / 0.4 # mmol C/s
+    end
+    total_Fe_flux = 1.45e12 / (365*24*60*60) / 55.8 * 1000 # mmolFe/s
+    Fe_flux_scalefactor = total_Fe_flux / total_DIC_flux
+
+    DIC_Alk_flux = Field(forcing_fields.DOC * 0.6 / 0.4)
+
+    forcing_fields = merge(forcing_fields, (; DIC = DIC_Alk_flux,
+                                              Alk = DIC_Alk_flux,
+                                              Fe  = DIC_Alk_flux * Fe_flux_scalefactor))
+
+    return forcing_fields
 end
