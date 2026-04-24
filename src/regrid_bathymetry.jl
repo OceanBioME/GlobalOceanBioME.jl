@@ -3,7 +3,9 @@ using NumericalEarth, Oceananigans, KernelAbstractions, Statistics, NCDatasets
 using Oceananigans.Architectures: architecture
 using Oceananigans.BoundaryConditions: fill_halo_regions!
 using Oceananigans.Grids: x_domain, y_domain, topology
+using Oceananigans.Fields: fractional_x_index, fractional_y_index
 
+using NumericalEarth.DataWrangling: download_dataset, metadata_path
 using NumericalEarth.Bathymetry: BathymetryRegridding, load_bathymetry_cache, save_bathymetry_cache
 
 function MedianBathymetryRegridding(grid, metadata; label = "_median")
@@ -30,7 +32,8 @@ end
 
 function regrid_bathymetry(target_grid::AbstractGrid{FT};
                            metadata = Metadatum(:bottom_height; dataset = ETOPO2022()),
-                           cache = true) where FT
+                           cache = true,
+                           overwrite_cache = true) where FT
 
     config = MedianBathymetryRegridding(target_grid, metadata)
 
@@ -48,7 +51,8 @@ function regrid_bathymetry(target_grid::AbstractGrid{FT};
 
     bathymetry_native_grid = NumericalEarth.DataWrangling.native_grid(metadata, arch; halo = (10, 10, 1))
 
-    filepath = NumericalEarth.DataWrangling.metadata_path(metadata)
+    download_dataset(metadata)
+    filepath = metadata_path(metadata)
     dataset = Dataset(filepath, "r")
     z_data = convert(Array{FT}, dataset["z"][:, :])
     close(dataset)
@@ -64,7 +68,7 @@ function regrid_bathymetry(target_grid::AbstractGrid{FT};
 
     fill_halo_regions!(target_z)
 
-    if cache
+    if cache|overwrite_cache
         bottom_height = Array(interior(target_z, :, :, 1))
         save_bathymetry_cache(config, bottom_height)
     end
@@ -96,16 +100,20 @@ end
                 Oceananigans.Grids.φnode(i+1, j-1, target_grid, Center(), Face()), 
                 Oceananigans.Grids.φnode(i, j+1, target_grid, Center(), Face()))
 
-    λl, λr = mod(λl, 360)-180, mod(λr, 360)-180 # remap to -180 to 180 space
-
     φl, φr = ifelse(j == target_grid.Ny, (min(φr, φl), max(φr, φl)), (φl, φr))
+
+    locs = (Center(), Center(), Center())
     
     # assuming a regularly spaced lat/lon grid for the native
-    is = floor(Int, (λl - λ₀)/Δλ) + 1:floor(Int, (λr - λ₀)/Δλ)
-    js = floor(Int, (φl - φ₀)/Δφ) + 1:floor(Int, (φr - φ₀)/Δφ)
+    i0 = floor(Int, fractional_x_index(λl, locs, bathymetry_native_grid)) + 1
+    i1 = floor(Int, fractional_x_index(λr, locs, bathymetry_native_grid))
+    is = i0:i1
 
-    if λr < λl # 180E
-        native_zs = @inbounds [native_z[floor(Int, (λl - λ₀)/Δλ) + 1:Nx, js, 1]..., native_z[1:floor(Int, (λr - λ₀)/Δλ), js, 1]...]
+    js = floor(Int, fractional_y_index(φl, locs, bathymetry_native_grid)) + 1:floor(Int, fractional_y_index(φr, locs, bathymetry_native_grid))
+
+    if i1 < i0 # on the fold
+        native_zs = @inbounds [native_z[floor(Int, fractional_x_index(λl, locs, bathymetry_native_grid)) + 1:Nx, js, 1]..., 
+                               native_z[1:floor(Int, fractional_x_index(λr, locs, bathymetry_native_grid)), js, 1]...]
     else
         native_zs = @inbounds native_z[is, js, 1]
     end

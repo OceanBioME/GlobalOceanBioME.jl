@@ -19,7 +19,7 @@ using KernelAbstractions: @kernel, @index
     # would branching this not be faster rather than interpolating the fts every time?
 
     S  = @inbounds model_fields.S[i, j, k]
-    Sb = @inbounds Sbf[i, j, k, Time(clock.time)]
+    Sb = @inbounds Sbf[i, j, 1, Time(clock.time)]
 
     return ifelse(k == grid.Nz, τ * (Sb - S), zero(grid))
 end
@@ -43,8 +43,8 @@ function salinity_nudging(grid;
                                  inpainting,
                                  cache_inpainted_data)
 
-    fts = FieldTimeSeries((Center(), Center(), nothing), grid, fts_native.times;
-                          time_indexing)
+    fts = FieldTimeSeries((Center(), Center(), Center()), grid, fts_native.times;
+                          time_indexing, indices = (:, :, 1))
 
     for n in 1:12
         interpolate_surface!(fts[n], fts_native[n])

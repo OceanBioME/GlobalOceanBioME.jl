@@ -7,9 +7,9 @@ using Oceananigans.Architectures: on_architecture, CPU
 const exports = (:DIN, :DIP, :DOC, :DON, :DOP, :DSi, :PN, :POC, :PP, :TSS)
 
 # hydrology can be Qnat which is the estimated non-athropogenically disturbed outflow
-# outflows are km^3/yr
+# outflows are km^3/yr converted to kg/m^3/s so on flat grid kg/m^2/s
 # Mg/yr to mmol / s : 10^6 = g/yr, 1/14 = mol/yr
-function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, scalefactor = (10^6/14, 10^6/14, 10^6/12) ./ (365*24*60*60) .* 1000)
+function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, scalefactor = (10^6/14, 10^6/14, 10^6/12, 10^9) ./ (365*24*60*60) .* 1000)
     (tracers != (:DIN, :DON, :DOC)) && throw(ArgumentError("Haven't implemented this function correctly so have to use default tracers"))
     basins_df = CSV.read("rivers/basins.csv", DataFrame)
     export_df = CSV.read("rivers/exports.csv", DataFrame)
@@ -52,15 +52,23 @@ function river_exports(grid; tracers = (:DIN, :DON, :DOC), hydrology = :Qact, sc
 
         list_index = findmin(objective)[2]
 
-        i, j = Tuple(CartesianIndices(size(λ))[list_index])
-        vol = Oceananigans.Operators.volume(i, j, grid.Nz, grid, Center(), Center(), Center())
-
-        for (m, tracer) in enumerate(tracers)
-            forcing_fields[tracer][i, j, grid.Nz] += export_df[n, Symbol(:Ld_, tracer)] * scalefactor[m] / vol 
+        # wow this is horrible
+        i, j = Tuple(CartesianIndices((grid.Nx, grid.Ny))[list_index])
+        total_vol = 0.0
+        kb = grid.Nz
+        while !Oceananigans.ImmersedBoundaries.immersed_cell(i, j, kb, grid)
+            total_vol += Oceananigans.Operators.volume(i, j, grid.Nz, grid, Center(), Center(), Center())
+            kb -= 1
         end
 
-        if !isnothing(hydrology)
-            forcing_fields[hydrology][i, j, grid.Nz] += hydrology_df[n, hydrology] * scalefactor[end] / vol 
+        for k in grid.Nz:-1:kb
+            for (m, tracer) in enumerate(tracers)
+                forcing_fields[tracer][i, j, k] += export_df[n, Symbol(:Ld_, tracer)] * scalefactor[m] / total_vol 
+            end
+
+            if !isnothing(hydrology)
+                forcing_fields[hydrology][i, j, k] += hydrology_df[n, hydrology] * scalefactor[end] / total_vol 
+            end
         end
     end
     # constant DIC to Fe ratio to get 1.45 Tg Fe yr−1
