@@ -85,11 +85,15 @@ tracer_advection =
      NO₃ = WENO(order=5, bounds=(0.0, Inf)),
      NH₄ = WENO(order=5, bounds=(0.0, Inf)))#WENO(order=5, minimum_buffer_upwind_order=1) # if we don't do this sinking particles get messed up
 
+@inline restoring_mask(x, y, z, t) = z>-50
+rate = 1/50days#6days
 dates = DateTime(1993, 1, 1) : Month(1) : DateTime(1993, 11, 1)
-mask = LinearlyTaperedPolarMask(southern=(-80, -70), northern=(70, 90), z=(-100, 0))
 salinity = Metadata(:salinity;  dates, dataset=ECCO4DarwinMonthly(), dir = data_path)
-rate = 1/6days
-FS = DatasetRestoring(salinity, grid; mask, rate)
+RS = DatasetRestoring(salinity, grid; mask = restoring_mask, rate)
+temperature = Metadata(:temperature;  dates, dataset=ECCO4DarwinMonthly(), dir = data_path)
+RT = DatasetRestoring(temperature, grid; mask = restoring_mask, rate)
+alkalinity = Metadata(:alkalinity;  dates, dataset=ECCO4DarwinMonthly(), dir = data_path)
+RAlk = DatasetRestoring(alkalinity, grid; mask = restoring_mask, rate, field_name = GlobalOceanBioME.OceanBioMEAlk())
 
 # ### Atmospheric forcing
 
@@ -100,7 +104,6 @@ atmosphere = JRA55PrescribedAtmosphere(arch; backend=JRA55NetCDFBackend(2920),
                                        dir = data_path)
 
 # BGC
-
 modifiers = (ScaleNegativeTracers((:NO₃, :NH₄, :P, :Z, :sPOM, :bPOM, :DOM); invalid_fill_value = zero(grid)),
              ScaleNegativeTracers((:Fe, :P, :Z, :sPOM, :bPOM, :DOM); scalefactors = (1/4.6375e-5, 1, 1, 1, 1, 1), invalid_fill_value = zero(grid)),
              ScaleNegativeTracers((:DIC, :P, :Z, :sPOM, :bPOM, :DOM); scalefactors = (1/6.56, 1, 1, 1, 1, 1), invalid_fill_value = zero(grid)))
@@ -128,13 +131,72 @@ iron_flux = DustCOMM_iron_deposition_boundary_condition(grid)
 boundary_conditions = (; Fe = FieldBoundaryConditions(top = iron_flux),
                          DIC = FieldBoundaryConditions(top = CO₂_flux))
 
-rivers = GlobalOceanBioME.river_exports(grid; tracers = (:DIN, :DON, :DOC))
+rivers = GlobalOceanBioME.river_exports(grid)
+#=
+struct AlkalinityRelease{IJ, FT} <: Function
+    locations::IJ
+   start_time::FT
+     duration::FT
+         rate::FT
+end
 
-forcing = (S = FS,
+using Adapt
+import Adapt: adapt_structure
+
+Adapt.adapt_structure(to, release::AlkalinityRelease) =
+    AlkalinityRelease(adapt(to, release.locations),
+                      adapt(to, release.start_time),
+                      adapt(to, release.duration),
+                      adapt(to, release.rate))
+
+@inline (release::AlkalinityRelease)(i, j, k, grid, clock, model_fields) =
+    ifelse(((i, j) in release.locations) & 
+           (release.start_time <= clock.time < release.start_time + release.duration) & 
+           (k == grid.Nz),
+           release.rate,
+           zero(release.rate))
+
+release_locations = ((83, 98), (82, 98), 
+                     (81, 98), 
+                     (82, 99), (81, 99), 
+                     (81, 100), 
+                     (82, 97), 
+                     (81, 97))
+
+#= Closest match but much larger area
+((83, 98), (82, 98), 
+ (81, 98), (80, 98), 
+ (82, 99), (81, 99), 
+ (80, 99), (81, 100), 
+ (83, 97), (82, 97), 
+ (81, 97), (82, 96))
+=#
+
+release_volume = CUDA.@allowscalar sum(
+    map(ij -> volume(ij[1], ij[2], grid.Nz, grid, Center(), Center(), Center()),
+        release_locations)
+)
+
+total_release_rate = 10*1000/(365days) # 10mol/m²/yr
+Δz1 = CUDA.@allowscalar grid.z.Δᵃᵃᶜ[end]
+rate = total_release_rate / Δz1
+
+total_release = release_volume * rate * days / 1000
+
+@info "Releasing $total_release mol/day Alkalinity for 30days"
+
+FAlk = Forcing(AlkalinityRelease(release_locations,
+                                 1*365days,
+                                 30days,
+                                 rate), discrete_form = true)
+=#
+# disregarding particulate fluxs
+forcing = (S = RS, T = RT,
            DOM = Forcing(rivers.DON),
-           NO₃ = Forcing(rivers.DIN),
+           NO₃ = Forcing(rivers.DIN * 0.67),
+           NH₄ = Forcing(rivers.DIN * 0.33),
            DIC = Forcing(rivers.DIC),
-           Alk = Forcing(rivers.Alk),
+           Alk = (Forcing(rivers.Alk), RAlk),
            Fe  = Forcing(rivers.Fe))
 
 ocean = ocean_simulation(grid; momentum_advection, tracer_advection, free_surface,
@@ -160,23 +222,41 @@ ecco_nitrate               = Metadatum(:nitrate; date, dataset = darwin, dir = d
 ecco_iron                  = Metadatum(:dissolved_iron; date, dataset = darwin, dir = data_path)
 ecco_dic                   = Metadatum(:dissolved_inorganic_carbon; date, dataset = darwin, dir = data_path)
 ecco_alk                   = Metadatum(:alkalinity; date, dataset = darwin, dir = data_path)
-#=
+ecco_dop                   = Metadatum(:dissolved_organic_phosphorus; date, dataset = darwin, dir = data_path)
+ecco_pop                   = Metadatum(:particulate_organic_phosphorus; date, dataset = darwin, dir = data_path)
+
 using JLD2
-restart_file = jldopen("../NumericalEarth.jl/checkpointer_orca2_iteration1273120.jld2")
-=#
-set!(ocean.model, T=ecco_temperature, 
-                  S=ecco_salinity, 
+restart_file = jldopen("physics_spinup.jld2") # 294yr spinup checkpointer_orca2_iteration432160.jld2") # 295yr phys + 75yr BGC #
+
+set!(ocean.model, #T=ecco_temperature, 
+                  #S=ecco_salinity, 
                   NO₃ = ecco_nitrate, 
                   Fe = ecco_iron, 
                   DIC = ecco_dic, 
-                  Alk = ecco_alk)
-#=
+                  Alk = ecco_alk,
+                  DOM = ecco_dop,
+                  sPOM = ecco_pop)
+
+ocean.model.tracers.DOM .*= 16
+ocean.model.tracers.sPOM .*= 16
+
+ocean.model.free_surface.displacement.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/free_surface/displacement/data"])
 ocean.model.velocities.u.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/velocities/u/data"])
 ocean.model.velocities.v.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/velocities/v/data"])
 ocean.model.velocities.w.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/velocities/w/data"])
 ocean.model.tracers.T.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/T/data"])
 ocean.model.tracers.S.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/S/data"])
-=#
+#=ocean.model.tracers.P.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/P/data"])
+ocean.model.tracers.Z.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/Z/data"])
+ocean.model.tracers.DOM.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/DOM/data"])
+ocean.model.tracers.sPOM.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/sPOM/data"])
+ocean.model.tracers.bPOM.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/bPOM/data"])
+ocean.model.tracers.NO₃.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/NO₃/data"])
+ocean.model.tracers.NH₄.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/NH₄/data"])
+ocean.model.tracers.Fe.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/Fe/data"])
+ocean.model.tracers.DIC.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/DIC/data"])
+ocean.model.tracers.Alk.data.parent .= on_architecture(arch, restart_file["simulation/model/ocean/model/tracers/Alk/data"])=#
+
 tracers = ocean.model.tracers
 
 for tracer in (tracers.NO₃, tracers.DIC, tracers.Alk, tracers.Fe)
@@ -187,16 +267,14 @@ end
 set!(ocean.model, P = 1e-3, 
                   Z = 1e-4, 
                   NH₄ = 1e-7, 
-                  DOM = 1e-7, 
-                  sPOM = 1e-7,
                   bPOM = 1e-7)
-set!(sea_ice.model, h=ecco_sea_ice_thickness, 
-                    ℵ=ecco_sea_ice_concentration)
+#set!(sea_ice.model, h=ecco_sea_ice_thickness, 
+#                    ℵ=ecco_sea_ice_concentration)
 
-#sea_ice.model.ice_thickness.data.parent .= on_architecture(arch, restart_file["simulation/model/sea_ice/model/ice_thickness/data"])
-#sea_ice.model.ice_concentration.data.parent .= on_architecture(arch, restart_file["simulation/model/sea_ice/model/ice_concentration/data"])
+sea_ice.model.ice_thickness.data.parent .= on_architecture(arch, restart_file["simulation/model/sea_ice/model/ice_thickness/data"])
+sea_ice.model.ice_concentration.data.parent .= on_architecture(arch, restart_file["simulation/model/sea_ice/model/ice_concentration/data"])
 
-#close(restart_file)
+close(restart_file)
 
 # ### Coupled simulation
 
@@ -206,7 +284,7 @@ set!(sea_ice.model, h=ecco_sea_ice_thickness,
 # With Runge-Kutta 3rd order time-stepping we can safely use a timestep of 20 minutes.
 
 coupled_model = OceanSeaIceModel(ocean, sea_ice; atmosphere, radiation)
-simulation = Simulation(coupled_model; Δt=90minutes, stop_time=295*365days)
+simulation = Simulation(coupled_model; Δt=90minutes, stop_time=15*365days)
 
 # ### A progress messenger
 #
@@ -260,10 +338,10 @@ vertical_slices =
 
 surface_flux = (; CO₂ = BoundaryConditionOperation(ocean.model.tracers.DIC, :top, ocean.model))
 
-fname_suffix = "orca2_bgc_ice_blocking"
+fname_suffix = "orca2_nudging"
 
 ocean.output_writers[:surface] = JLD2Writer(ocean.model, ocean_outputs;
-                                            schedule = TimeInterval(365days/12),
+                                            schedule = AveragedTimeInterval(365days/12),
                                             filename = "surface_"*fname_suffix,
                                             indices = (:, :, grid.Nz),
                                             overwrite_existing = !pickup)
@@ -274,17 +352,17 @@ ocean.output_writers[:surface_CO2] = JLD2Writer(ocean.model, surface_flux;
                                                 overwrite_existing = !pickup)
 
 ocean.output_writers[:diagnostics] = JLD2Writer(ocean.model, diagnostics;
-                                                schedule = TimeInterval(365days/12),
+                                                schedule = AveragedTimeInterval(365days/12),
                                                 filename = "diagnostics_"*fname_suffix,
                                                 overwrite_existing = !pickup)
 
 ocean.output_writers[:vslices] = JLD2Writer(ocean.model, vertical_slices;
-                                            schedule = TimeInterval(365days/12),
+                                            schedule = AveragedTimeInterval(365days/12),
                                             filename = "basin_slice_"*fname_suffix,
                                             overwrite_existing = !pickup)
 
 sea_ice.output_writers[:surface] = JLD2Writer(sea_ice.model, sea_ice_outputs;
-                                              schedule = TimeInterval(365days/12),
+                                              schedule = AveragedTimeInterval(365days/12),
                                               filename = "sea_ice_"*fname_suffix,
                                               overwrite_existing = !pickup)
 
