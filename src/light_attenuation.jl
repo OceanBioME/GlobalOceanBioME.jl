@@ -34,9 +34,9 @@ Adapt.adapt_structure(to, par::PARfromFTS) =
                adapt(to, par.location),
                adapt(to, par.PAR_fraction))
 
-PAR_from_atmosphere(atmosphere) = 
-    PARfromFTS(; shortwave = atmosphere.downwelling_radiation.shortwave,
-                 grid = atmosphere.downwelling_radiation.shortwave.grid,
+PAR_from_radiation(radiation) = 
+    PARfromFTS(; shortwave = radiation.downwelling_shortwave,
+                 grid = radiation.downwelling_shortwave.grid,
                  location = (Center(), Center(), nothing))
 
 

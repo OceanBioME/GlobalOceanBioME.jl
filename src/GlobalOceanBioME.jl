@@ -2,7 +2,7 @@ module GlobalOceanBioME
 
 export wind_from_atmosphere,
        DustCOMM_iron_deposition_boundary_condition,
-       PAR_from_atmosphere
+       PAR_from_radiation
 
 using Adapt
 
