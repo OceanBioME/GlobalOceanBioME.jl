@@ -36,8 +36,8 @@ Adapt.adapt_structure(to, par::PARfromFTS) =
 
 PAR_from_atmosphere(atmosphere) = 
     PARfromFTS(; shortwave = atmosphere.downwelling_radiation.shortwave,
-                   grid = atmosphere.downwelling_radiation.shortwave.grid,
-                   location = (Center(), Center(), nothing))
+                 grid = atmosphere.downwelling_radiation.shortwave.grid,
+                 location = (Center(), Center(), nothing))
 
 
 # TODO: this could significantly change with snow
@@ -61,20 +61,15 @@ end
                    ice_impedance :: II = 1.5
 end
 
-Adapt.adapt_structure(to, par::IceMaskedLightAttenuation) = adapt(to, par.underlying_light_attenuation)
-    #=IceMaskedLightAttenuation(
-        adapt(to, par.underlying_light_attenuation),
-        nothing,
-        nothing,
-        nothing,
-        nothing
-    )=#
+Adapt.adapt_structure(to, par::IceMaskedLightAttenuation) = 
+    adapt(to, par.underlying_light_attenuation)
 
 import Oceananigans.Biogeochemistry: 
     biogeochemical_auxiliary_fields, 
     update_biogeochemical_state!
 
-biogeochemical_auxiliary_fields(par::IceMaskedLightAttenuation) = biogeochemical_auxiliary_fields(par.underlying_light_attenuation)
+biogeochemical_auxiliary_fields(par::IceMaskedLightAttenuation) = 
+    biogeochemical_auxiliary_fields(par.underlying_light_attenuation)
 
 function update_biogeochemical_state!(model, par::IceMaskedLightAttenuation)
     update_biogeochemical_state!(model, par.underlying_light_attenuation)
@@ -106,4 +101,3 @@ end
         PAR[i, j, k] = PAR[i, j, k] * impedance
     end
 end
-
